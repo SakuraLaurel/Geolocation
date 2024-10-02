@@ -11,7 +11,7 @@ class Img(object):
         self.__slc = None
         self.__slc_func = slc_func
 
-    def __state(self, t, pos=True):
+    def state(self, t, pos=True):
         first_time = self.par['time_of_first_state_vector']
         interval = self.par['state_vector_interval']
         if pos:
@@ -38,9 +38,9 @@ class Img(object):
         R_T = wgs2ecs(lon, lat, h).reshape((3, -1))
         t = self.par['start_time'] * np.ones(R_T.shape[1])
         for _ in range(times):
-            V_S = self.__state(t, False)
+            V_S = self.state(t, False)
             V_S_norm = np.linalg.norm(V_S, axis=0)
-            R_ST = R_T - self.__state(t, True)
+            R_ST = R_T - self.state(t, True)
             delta_r = np.sum(np.multiply(R_ST, V_S), axis=0) / V_S_norm
             t += delta_r / V_S_norm
 
@@ -48,7 +48,7 @@ class Img(object):
         dt = self.par['azimuth_line_time']
         row = (t - start_time) / dt
 
-        pos = self.__state(t, True)
+        pos = self.state(t, True)
         offset = yield pos.reshape((3,) + np.shape(lon))
 
         target = wgs2ecs(lon, lat, h).reshape((3, -1))
@@ -99,6 +99,7 @@ class Img(object):
         intensity[intensity > max_v] = max_v
         intensity[intensity < min_v] = min_v
         return intensity
+    
     def set(self, row, col, color=10000):
         if self.__slc is None:
             self.__slc = self.__slc_func()
@@ -119,6 +120,46 @@ class TH(Img):
         super().__init__(par, lambda: th_cos2slc(cos_path))
         self.f = 9.65e9
 
+    def indirect_with_offset(self, lon, lat, h, ref=None, times=10):
+        if ref is None:
+            ref = self
+        c = 2.99792458e8
+        R_T = wgs2ecs(lon, lat, h).reshape((3, -1))
+        t = self.par['start_time'] * np.ones(R_T.shape[1])
+        def func_Rrt(t):return R_T - ref.state(t, True)
+        def func_Rst(t):return R_T- self.state(t,True)
+        def func_norm(m): return np.linalg.norm(m,axis=0)
+        def func_dot(m1, m2): return np.sum(np.multiply(m1, m2), axis=0)
+        for _ in range(times):
+            Vr = ref.state(t - func_norm(func_Rrt(t)) / c, False)
+            Vs = self.state(t + func_norm(func_Rst(t)) / c,False)
+
+            t += (func_dot(func_Rrt(t - func_norm(func_Rrt(t)) / c), Vr)/func_norm(Vr)**2 + func_dot(func_Rst(t + func_norm(func_Rst(t)) / c), Vs)/func_norm(Vs)**2) / 2
+
+        start_time = self.par['start_time']
+        dt = self.par['azimuth_line_time']
+        row = (t - start_time + func_norm(func_Rst(t)) / c) / dt
+
+        offset = yield self.state(t, True).reshape((3,) + np.shape(lon))
+        dR = self.par['range_pixel_spacing']
+        
+        tr = t - func_norm(func_Rrt(t)) / c
+        ts = t + func_norm(func_Rst(t)) / c
+        col = ((func_norm(func_Rrt(tr))+func_norm(func_Rst(ts)))/2 - self.par['near_range_slc'] + offset.ravel()) / dR
+
+
+        row, col = row.reshape(np.shape(lon)), col.reshape(np.shape(lon))
+        if np.max(row) > self.par['azimuth_lines'] - 1:
+            row = -2
+        elif np.min(row) < 0:
+            row = -1
+        if np.max(col) > self.par['range_samples'] - 1:
+            col = -2
+        elif np.min(col) < 0:
+            col = -1
+
+        yield row, col
+        return
 
 class S1(Img):
     xml_path = None
