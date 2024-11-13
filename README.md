@@ -1,4 +1,4 @@
-这是星载SAR影像几何定位精度研究的相关代码。
+这是星载SAR影像几何定位精度研究的相关代码。论文地址：[High-Resolution Spaceborne SAR Geolocation Accuracy Analysis and Error Correction](https://www.mdpi.com/2072-4292/16/22/4210)
 
 # 1 介绍
 
